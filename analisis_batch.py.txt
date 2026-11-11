@@ -1,0 +1,41 @@
+cat << 'EOF' > analisis_batch.py
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, avg, max, min, count, round, substring
+
+spark = SparkSession.builder \
+    .appName("AnalisisRealTRMColombia") \
+    .getOrCreate()
+
+spark.sparkContext.setLogLevel("WARN")
+
+print("\n================ 1. CARGA DE DATOS REALES (DATOS.GOV.CO) ================")
+df = spark.read.csv("trm_colombia.csv", header=True, inferSchema=True)
+print(f"Total de registros descargados de la Superfinanciera: {df.count()}")
+df.show(10, truncate=False)
+
+print("\n================ 2. LIMPIEZA Y TRANSFORMACION ================")
+df_limpio = df.dropna(subset=["valor", "vigenciadesde"]) \
+              .withColumn("valor_trm", col("valor").cast("double")) \
+              .filter(col("valor_trm") > 0) \
+              .withColumn("anio", substring(col("vigenciadesde").cast("string"), 1, 4))
+
+df_limpio.select("vigenciadesde", "anio", "valor_trm", "unidad").show(10)
+
+print("\n================ 3. ANALISIS EXPLORATORIO (EDA) ================")
+print("--- Comportamiento del Dolar (Promedio, Minimo y Maximo) por Anio ---")
+resumen_anual = df_limpio.groupBy("anio").agg(
+    count("valor_trm").alias("dias_cotizados"),
+    round(avg("valor_trm"), 2).alias("promedio_trm"),
+    round(min("valor_trm"), 2).alias("dolar_minimo"),
+    round(max("valor_trm"), 2).alias("dolar_maximo")
+).orderBy(col("anio").desc())
+
+resumen_anual.show(15)
+
+print("--- Top 10 dias con el Dolar mas caro en la historia de Colombia ---")
+top_caros = df_limpio.select("vigenciadesde", "valor_trm", "unidad") \
+                     .orderBy(col("valor_trm").desc())
+top_caros.show(10)
+
+spark.stop()
+EOF
